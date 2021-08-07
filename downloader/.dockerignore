@@ -1,2 +1,6 @@
 Dockerfile
 README.md
+build/
+.idea
+output/
+.gradle/

@@ -11,4 +11,4 @@ Utility to download apks from play store.
 ## Docker way
 
 1. build the image `docker build -t apk-downloader .`
-2. use it `docker run -v $(pwd)/output:/app/output/ apk-downloader $MAIL $AAS_TOKEN $PACKAGE_NAME`
+2. use it `docker run -v $(pwd)/output:/output/ apk-downloader $MAIL $AAS_TOKEN $PACKAGE_NAME /output/app.apk`
