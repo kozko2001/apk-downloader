@@ -1,24 +1,28 @@
+---
 kind: pipeline
-type: docker
 name: default
 
 steps:
-  - name: clean-downloader
+  - name: download apks
     image: docker:dind
-    privileged: true
     volumes:
       - name: dockersock
         path: /var/run/docker.sock
+      - name: original
+        path: /tmp/original
+    environment:
+      PLAYSTORE_MAIL:
+        from_secret: PLAYSTORE_MAIL
+      AAS_TOKEN:
+        from_secret: AAS_TOKEN
     commands:
-      - docker system prune -f
-      - docker rm -f apk-downloader || true
-      - docker rmi -f apk-downloader
+      - docker build -t apk-downloader -f downloader/Dockerfile downloader
+      - docker run -v /tmp/original:/output/ apk-downloader $$PLAYSTORE_MAIL $$AAS_TOKEN com.twitter.android /output/com.twitter.android.apk
 
-  - name: build
-    image: docker:dind
-    privileged: true
-    volumes:
-      - name: dockersock
-        path: /var/run/docker.sock
-    commands:
-      - docker build -f downloader/Dockerfile --tag apk-downloader --force-rm
+volumes:
+  - name: dockersock
+    host:
+      path: /var/run/docker.sock
+  - name: original
+    host:
+      path: /srv/docker/apk-repo/original
