@@ -17,7 +17,7 @@ steps:
         from_secret: AAS_TOKEN
     commands:
       - docker build -t apk-downloader -f downloader/Dockerfile downloader
-      - docker run -v /tmp/original:/output/ apk-downloader $$PLAYSTORE_MAIL $$AAS_TOKEN com.twitter.android /output/com.twitter.android.apk
+      - docker run -v /tmp/original:/output/ apk-downloader $PLAYSTORE_MAIL $AAS_TOKEN com.twitter.android /output/com.twitter.android.apk
 
 volumes:
   - name: dockersock
@@ -25,4 +25,4 @@ volumes:
       path: /var/run/docker.sock
   - name: original
     host:
-      path: /srv/docker/apk-repo/original
+      path: /tmp/docker/apk-repo/original
