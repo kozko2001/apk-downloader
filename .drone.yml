@@ -8,8 +8,6 @@ steps:
     volumes:
       - name: dockersock
         path: /var/run/docker.sock
-      - name: original
-        path: /tmp/original
     environment:
       PLAYSTORE_MAIL:
         from_secret: PLAYSTORE_MAIL
@@ -17,12 +15,9 @@ steps:
         from_secret: AAS_TOKEN
     commands:
       - docker build -t apk-downloader -f downloader/Dockerfile downloader
-      - docker run -v /tmp/original:/output/ apk-downloader $PLAYSTORE_MAIL $AAS_TOKEN com.twitter.android /output/com.twitter.android.apk
+      - docker run -v /srv/docker/apk-repo/original:/output apk-downloader $PLAYSTORE_MAIL $AAS_TOKEN com.twitter.android /output/com.twitter.android.apk
 
 volumes:
   - name: dockersock
     host:
       path: /var/run/docker.sock
-  - name: original
-    host:
-      path: /tmp/docker/apk-repo/original
