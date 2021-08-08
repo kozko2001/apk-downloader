@@ -26,6 +26,15 @@ steps:
       - docker build -t apk-patcher -f patcher/Dockerfile patcher/
       - docker run -v /srv/docker/apk-repo/original:/input -v /srv/docker/apk-repo/modified:/output apk-patcher /input/com.twitter.android.apk /output/com.twitter.android.apk
 
+  - name: sign apks
+    image: docker:dind
+    volumes:
+      - name: dockersock
+        path: /var/run/docker.sock
+    commands:
+      - docker build -t apk-sign -f sign/Dockerfile sign/
+      - docker run -v /srv/docker/apk-repo/modified:/input apk-sign /input/com.twitter.android.apk
+
   - name: update fdroid
     image: docker:dind
     volumes:
