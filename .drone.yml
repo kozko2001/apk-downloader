@@ -17,7 +17,7 @@ steps:
       - docker build -t apk-downloader -f downloader/Dockerfile downloader
       - docker run -v /srv/docker/apk-repo/original:/output apk-downloader $PLAYSTORE_MAIL $AAS_TOKEN com.twitter.android /output/com.twitter.android.apk
 
- - name: patch apks
+  - name: patch apks
     image: docker:dind
     volumes:
       - name: dockersock
@@ -25,7 +25,6 @@ steps:
     commands:
       - docker build -t apk-patcher -f patcher/Dockerfile patcher/
       - docker run -v /srv/docker/apk-repo/original:/input -v /srv/docker/apk-repo/modified:/output apk-downloader /input/com.twitter.android.apk /output/com.twitter.android.apk
-
 
   - name: update fdroid
     image: docker:dind
