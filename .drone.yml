@@ -17,6 +17,16 @@ steps:
       - docker build -t apk-downloader -f downloader/Dockerfile downloader
       - docker run -v /srv/docker/apk-repo/original:/output apk-downloader $PLAYSTORE_MAIL $AAS_TOKEN com.twitter.android /output/com.twitter.android.apk
 
+ - name: patch apks
+    image: docker:dind
+    volumes:
+      - name: dockersock
+        path: /var/run/docker.sock
+    commands:
+      - docker build -t apk-patcher -f patcher/Dockerfile patcher/
+      - docker run -v /srv/docker/apk-repo/original:/input -v /srv/docker/apk-repo/modified:/output apk-downloader /input/com.twitter.android.apk /output/com.twitter.android.apk
+
+
   - name: update fdroid
     image: docker:dind
     volumes:
@@ -24,10 +34,10 @@ steps:
         path: /var/run/docker.sock
       - name: private
         path: /private
-      - name: original
-        path: /original
+      - name: modified
+        path: /modified
     commands:
-      - cp /original/*.apk /private/repo/
+      - cp /modified/*.apk /private/repo/
       - docker build -t apk-repo -f repo/Dockerfile repo
       - docker run -v /srv/docker/apk-repo/private:/fdroid repo update -c
       - docker run -v /srv/docker/apk-repo/private:/fdroid -v /srv/docker/apk-repo/public:/public repo deploy -v
@@ -36,9 +46,9 @@ volumes:
   - name: dockersock
     host:
       path: /var/run/docker.sock
-  - name: original
+  - name: modified
     host:
-      path: /srv/docker/apk-repo/original
+      path: /srv/docker/apk-repo/modified
   - name: private
     host:
       path: /srv/docker/apk-repo/private
