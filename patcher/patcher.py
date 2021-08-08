@@ -4,7 +4,7 @@ import subprocess
 import xml.etree.ElementTree
 from pathlib import Path
 
-APK_TOOL_BASE = ["java", "-jar", "../downloader/python/apktool_2.5.0.jar"]
+APK_TOOL_BASE = ["java", "-jar", "apktool_2.5.0.jar"]
 
 
 def decompile(apk, workfolder):
@@ -29,7 +29,7 @@ def get_pkg_name(workfolder):
 
 
 def patch_twitter(workfolder):
-    patch = Path(__file__).parent / "twitter_patch.smali"
+    patch = Path(__file__).parent / "patches" / "twitter_patch.smali"
     with patch.open(mode="r") as f:
         new_function = f.readlines()
     print(new_function)
