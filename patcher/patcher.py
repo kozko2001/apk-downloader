@@ -70,6 +70,15 @@ def patch_twitter(workfolder):
         f.write(lines)
 
 
+    ## Patch resource (if not... the profile screen crashes...)
+    # I think it's related to the fact we are not downloading the apk for my exact phone)
+    f = workfolder / "res" / "layout" / "scrolling_header_activity.xml"
+    with f.open() as f:
+        data = f.read()
+    data = data.replace("@dimen/pull_to_refresh_drawable_width", "0dp")
+    with f.open(mode="w") as f:
+        f.write(lines)
+
 @click.command()
 @click.argument("input", type=click.Path(exists=True))
 @click.argument("output", type=click.Path(exists=False, dir_okay=False))
