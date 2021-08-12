@@ -47,8 +47,8 @@ steps:
     commands:
       - cp /modified/*.apk /private/repo/
       - docker build -t apk-repo -f repo/Dockerfile repo
-      - docker run -v /srv/docker/apk-repo/private:/fdroid repo update -c
-      - docker run -v /srv/docker/apk-repo/private:/fdroid -v /srv/docker/apk-repo/public:/public repo deploy -v
+      - docker run -v /srv/docker/apk-repo/private:/fdroid apk-repo update -c
+      - docker run -v /srv/docker/apk-repo/private:/fdroid -v /srv/docker/apk-repo/public:/public apk-repo deploy -v
 
 volumes:
   - name: dockersock
