@@ -14,7 +14,11 @@ from sys import exit
 # Main()
 ####################
 
-APK_TOOL = ["java", "-jar", "apktool_2.5.0.jar"]
+APK_TOOL = [
+    "java",
+    "-jar",
+    "apktool-cli-all.jar",
+]
 
 
 def main():
@@ -663,6 +667,9 @@ def disableApkSplitting(baseapkdir):
                 del el.attrib[ns + "isSplitRequired"]
             if ns + "extractNativeLibs" in el.attrib:
                 el.attrib[ns + "extractNativeLibs"] = "true"
+            if ns + "logo" in el.attrib:
+                if "DUMMY" in el.attrib[ns + "logo"]:
+                    el.attrib[ns + "logo"] = el.attrib[ns + "icon"]
         elif appEl is not None and el.tag == "meta-data":
             if ns + "name" in el.attrib:
                 if el.attrib[ns + "name"] == "com.android.vending.splits.required":

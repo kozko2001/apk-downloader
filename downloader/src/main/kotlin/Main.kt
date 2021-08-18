@@ -6,6 +6,7 @@ import java.net.URL
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
+import java.util.*
 import kotlin.system.exitProcess
 
 
@@ -19,11 +20,17 @@ fun main(args: Array<String>) {
         exitProcess(1)
     }
 
+    val stream =   {}.javaClass.getResource("my-device.properties").openStream()
+
+    val props = Properties()
+    props.load(stream)
+
+
     var user = args[0];
     var token = args[1];
     var packageName = args[2];
 
-    val auth = AuthHelper.build(user, token)
+    val auth = AuthHelper.build(user, token, props)
     val app = AppDetailsHelper(auth).getAppByPackageName(packageName)
 
 
