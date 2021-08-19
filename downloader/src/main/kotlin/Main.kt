@@ -30,7 +30,7 @@ fun main(args: Array<String>) {
     var token = args[1];
     var packageName = args[2];
 
-    val auth = AuthHelper.build(user, token, props)
+    val auth = AuthHelper.build(user, token, "fp_2.properties")
     val app = AppDetailsHelper(auth).getAppByPackageName(packageName)
 
 
