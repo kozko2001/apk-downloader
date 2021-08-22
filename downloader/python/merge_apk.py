@@ -7,8 +7,10 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree
+import xml.etree.ElementTree as ET
 from glob import glob
 from sys import exit
+from pathlib import Path
 
 ####################
 # Main()
@@ -232,17 +234,22 @@ def combineSplitAPKs(pkgname, baseapk, configapks, tmppath, disableStylesHack, d
                 "\n[~] WARNING: Detected ProGuard/AndResGuard, decompile/recompile may not succeed.\n"
             )
     print("")
+
+    myFixPublicResourcesIds3(baseapkdir, splitapkpaths)
+
     # Walk the extracted APK directories and copy files and directories to the base APK
     copySplitApkFiles(baseapkdir, splitapkpaths)
 
-    # Fix public resource identifiers
-    fixPublicResourceIDs(baseapkdir, splitapkpaths)
+    # # Fix public resource identifiers
+    # myFixPublicResourcesIds2(baseapkdir, splitapkpaths)
 
-    # Hack: Delete duplicate style resource entries.
+    # # Hack: Delete duplicate style resource entries.
     if disableStylesHack == False:
         hackRemoveDuplicateStyleEntries(baseapkdir)
 
-    # Disable APK splitting in the base AndroidManifest.xml file
+    # fixDuplicatePublicIds(baseapkdir)
+
+    # # Disable APK splitting in the base AndroidManifest.xml file
     disableApkSplitting(baseapkdir)
 
     # Rebuild the base APK
@@ -282,71 +289,43 @@ def combineSplitAPKs(pkgname, baseapk, configapks, tmppath, disableStylesHack, d
             )
             sys.exit(1)
 
-    # # Sign the new APK
-    # print("[+] Signing new APK.")
-    # ret = subprocess.run(
-    #     [
-    #         "jarsigner",
-    #         "-sigalg",
-    #         "SHA1withRSA",
-    #         "-digestalg",
-    #         "SHA1",
-    #         "-keystore",
-    #         os.path.realpath(
-    #             os.path.join(
-    #                 os.path.realpath(__file__), "..", "data", "patch-apk.keystore"
-    #             )
-    #         ),
-    #         "-storepass",
-    #         "patch-apk",
-    #         os.path.join(baseapkdir, "dist", baseapkfilename),
-    #         "patch-apk-key",
-    #     ],
-    #     stdout=getStdout(),
-    # )
-    # if ret.returncode != 0:
-    #     print(
-    #         "Error: Failed to run 'jarsigner -sigalg SHA1withRSA -digestalg SHA1 -keystore "
-    #         + os.path.realpath(
-    #             os.path.join(
-    #                 os.path.realpath(__file__), "..", "data", "patch-apk.keystore"
-    #             )
-    #         )
-    #         + "-storepass patch-apk "
-    #         + os.path.join(baseapkdir, "dist", baseapkfilename)
-    #         + " patch-apk-key'.\nRun with --debug-output for more information."
-    #     )
-    #     sys.exit(1)
-
-    # # Zip align the new APK
-    # print("[+] Zip aligning new APK.")
-    # ret = subprocess.run(
-    #     [
-    #         "zipalign",
-    #         "-f",
-    #         "4",
-    #         os.path.join(baseapkdir, "dist", baseapkfilename),
-    #         os.path.join(baseapkdir, "dist", baseapkfilename[:-4] + "-aligned.apk"),
-    #     ],
-    #     stdout=getStdout(),
-    # )
-    # if ret.returncode != 0:
-    #     print(
-    #         "Error: Failed to run 'zipalign -f 4 "
-    #         + os.path.join(baseapkdir, "dist", baseapkfilename)
-    #         + " "
-    #         + os.path.join(baseapkdir, "dist", baseapkfilename[:-4] + "-aligned.apk")
-    #         + "'.\nRun with --debug-output for more information."
-    #     )
-    #     sys.exit(1)
-    # shutil.move(
-    #     os.path.join(baseapkdir, "dist", baseapkfilename[:-4] + "-aligned.apk"),
-    #     os.path.join(baseapkdir, "dist", baseapkfilename),
-    # )
-    # print("")
-
     # Return the new APK path
     return os.path.join(baseapkdir, "dist", baseapkfilename)
+
+
+def fixDuplicatePublicIds(baseapkdir):
+    print("KZK", baseapkdir)
+
+    baseXmlTree = xml.etree.ElementTree.parse(
+        os.path.join(baseapkdir, "res", "values", "public.xml")
+    )
+
+    root = baseXmlTree.getroot()
+    nodes = root.findall("./public")
+
+    cache = {}
+    to_remove = []
+    for n in nodes:
+        t = n.attrib["type"]
+        name = n.attrib["name"]
+        k = f"{t}--{name}"
+        v = n.attrib["id"]
+
+        if k in cache:
+            print(f"FOUND! key: {k} v1: {v} v2: {cache[k]}")
+            to_remove.append(n)
+        else:
+            cache[k] = v
+
+    if to_remove:
+        for n in to_remove:
+            root.remove(n)
+
+        baseXmlTree.write(
+            os.path.join(baseapkdir, "res", "values", "public.xml"),
+            encoding="utf-8",
+            xml_declaration=True,
+        )
 
 
 ####################
@@ -407,12 +386,490 @@ def copySplitApkFiles(baseapkdir, splitapkpaths):
                     # Copy files into the base APK, except for XML files in the res directory
                     if f.lower().endswith(".xml") and p.startswith(
                         os.path.join(baseapkdir, "res")
-                    ):
+                    ) and any(x in f.lower() for x in ["ids", "public", "styles", "drawables"]):
                         continue
                     dbgPrint("[+] Moving file to base APK: " + p[len(baseapkdir) :])
                     shutil.move(os.path.join(root, f), p)
     print("")
 
+from dataclasses import dataclass
+
+@dataclass
+class DummyResource:
+    dummyName: str
+    res_type: str
+    res_id: str
+    realName: str = None
+
+@dataclass
+class RenameResource:
+    res_name_from: str
+    res_name_to: str
+    res_type: str
+
+class DummyResources:
+
+    def __init__(self):
+        self.store = []
+
+    def addFromBase(self, dummyName, res_type, res_id):
+        r = DummyResource(dummyName, res_type, res_id)
+        self.store.append(r)
+
+    def buildCacheById(self):
+        self.cache_by_id = {f'{r.res_type}---{r.res_id}':r for r in self.store}
+
+    def buildCacheByDummyName(self):
+        self.cache_by_dummyName = {f'{r.res_type}---{r.dummyName}':r for r in self.store}
+
+
+    def findById(self, res_type, res_id):
+        if not hasattr(self, 'cache_by_id'):
+            self.buildCacheById()
+
+        return self.cache_by_id[f'{res_type}---{res_id}']
+
+    def findByDummyName(self, res_type, dummyName):
+        if not hasattr(self, 'cache_by_dummyName'):
+            self.buildCacheByDummyName()
+
+        return self.cache_by_dummyName.get(f'{res_type}---{dummyName}')
+
+    def getItemsWithRealName(self):
+        return [r for r in self.store if r.realName ]
+
+def myFixPublicResourcesIds3(baseapkdir, splitapkpaths):
+    basePublicXml = Path(baseapkdir) / "res" / "values" / "public.xml"
+
+    ## cache ids in the public.xml of the base
+    ids_in_base_public = {}
+    baseXmlTree = xml.etree.ElementTree.parse(basePublicXml)
+    for el in baseXmlTree.getroot():
+        if "name" in el.attrib and "id" in el.attrib and "type" in el.attrib:
+            ids_in_base_public[el.attrib['id']] = DummyResource(el.attrib['name'], el.attrib['type'], el.attrib['id'])
+
+
+    base_renames = []
+    for splitPath in splitapkpaths:
+        print(f"Processing {splitPath}....")
+
+        publicXml = Path(splitPath) / "res" / "values" / "public.xml"
+
+        if not publicXml.exists():
+            print(f"no public.xml found at {publicXml}")
+            continue
+
+        ## for the ones that doesn't exists in base, we should add it.
+        to_add = []
+        ## for the ones that does exist in base... we should change something
+        to_modify = []
+        to_not_modify = []
+
+        baseXmlTree = xml.etree.ElementTree.parse(publicXml)
+        for el in baseXmlTree.iter():
+            if "id" in el.attrib and "name" in el.attrib and "type" in el.attrib:
+                res_id = el.attrib['id']
+                res_name = el.attrib['name']
+
+                if res_id not in ids_in_base_public:
+                    to_add.append(el)
+                else:
+                    res = ids_in_base_public[res_id]
+
+                    if res.dummyName == res_name:
+                        to_not_modify.append(el)
+                    else:
+                        to_modify.append(el)
+
+        add_elements_to_base_public(basePublicXml, splitPath, to_add)
+
+        split_rename = []
+
+        ## Some validations...
+        for el in to_modify:
+            res_id = el.attrib['id']
+            split_name = el.attrib['name']
+            split_type = el.attrib['type']
+            base_name = ids_in_base_public[res_id].dummyName
+            base_type = ids_in_base_public[res_id].res_type
+
+            if split_type != base_type:
+                raise Exception("Assumption: internal ids are not shared between types")
+            
+            if "APKTOOL_DUMMY" not in split_name and "APKTOOL_DUMMY" not in base_name:
+                raise Exception("Assumption: on of the resources name for the same id should not contain APKTOOL_DUMMY")
+            if "APKTOOL_DUMMY" in split_name and "APKTOOL_DUMMY" in base_name:
+                raise Exception("Assumption: Both resource rename cannot be dummies")
+                
+            # print(f"res_id {res_id} split: {split_type} {split_name} base: {base_type} {base_name}")
+
+            
+            if "APKTOOL_DUMMY" in split_name:
+                split_rename.append(RenameResource(split_name, base_name, split_type))
+            if "APKTOOL_DUMMY" in base_name:
+                base_renames.append(RenameResource(base_name, split_name, base_type))
+
+
+
+        print(f"added without modification {len(to_add)}")
+        print(f"modified {len(to_modify)}")
+        print(f"not added cause they are dupes {len(to_not_modify)}")
+
+        print(f"Replacing in {splitPath} {len(split_rename)} changes")
+        replace_in_path(Path(splitPath), split_rename)
+
+    print(f"Replacing in {splitPath} {len(base_renames)} changes")
+    replace_in_path(Path(baseapkdir), base_renames)
+
+def replace_in_path(path, renames):
+    if not renames:
+        return
+
+    rename_cache = {f"@{res_rename.res_type}/{res_rename.res_name_from}":res_rename.res_name_to for res_rename in renames}
+
+    updated = 0
+    files = path.rglob("res/**/*.xml")
+    for f in files:
+        try:
+            # Load the XML
+            dbgPrint(f"[~] Parsing {f}")
+            tree = xml.etree.ElementTree.parse(f)
+
+            # Register the namespaces and get the prefix for the "android" namespace
+            namespaces = dict(
+                [
+                    node
+                    for _, node in xml.etree.ElementTree.iterparse(
+                        path / "AndroidManifest.xml",
+                        events=["start-ns"],
+                    )
+                ]
+            )
+            for ns in namespaces:
+                xml.etree.ElementTree.register_namespace(ns, namespaces[ns])
+            ns = "{" + namespaces["android"] + "}"
+
+            changed = False
+            for el in tree.iter():
+                for attr in el.attrib:
+                    val = el.attrib[attr]
+
+                    if (
+                        val.startswith("@")
+                        and "/" in val
+                    ):
+                        res_type = val.split("/")[0][1:]
+                        dummyName = val.split("/")[1]
+                        k = f"@{res_type}/{dummyName}"
+                        
+                        if k in rename_cache:
+                            el.attrib[attr] = val.replace(dummyName, rename_cache[k])
+                            updated += 1
+                            changed = True
+
+                    elif "type" in el.attrib:
+                        res_type = el.attrib['type']
+                        dummyName = val
+                        k = f"@{res_type}/{dummyName}"
+
+                        if k in rename_cache:
+                            el.attrib[attr] = val.replace(dummyName, rename_cache[k])
+                            updated += 1
+                            changed = True
+                        
+
+                # Check for references to APKTOOL_DUMMY_XXX resources in the element text
+                val = el.text
+                if (
+                    val is not None
+                    and val.startswith("@")
+                    and "/" in val
+                    # and dummyNameToRealName[val.split("/")[1]] is not None
+                ):
+                    res_type = val.split("/")[0][1:]
+                    dummyName = val.split("/")[1]
+                    k = f"@{res_type}/{dummyName}"
+
+                    if k in rename_cache:
+                        el.text = val.replace(dummyName, rename_cache[k])
+                        updated += 1
+                        changed = True
+
+            # Save the file if it was updated
+            if changed == True:
+                print(f"changed {f}")
+                tree.write(
+                    f,
+                    encoding="utf-8",
+                    xml_declaration=True,
+                )
+        except xml.etree.ElementTree.ParseError:
+            print(
+                "[-] XML parse error in "
+                + f
+                + ", skipping."
+            )
+    print(
+        "[+] Updated "
+        + str(updated)
+        + " references to dummy resource names in the base APK."
+    )
+    print("")
+ 
+
+def add_elements_to_base_public(basePublicXml, apk_path, elements_to_add):
+    baseXmlTree = xml.etree.ElementTree.parse(basePublicXml)
+    rootXml = baseXmlTree.getroot()
+
+    for el in elements_to_add:
+        name = el.attrib['name']
+        res_type = el.attrib['type']
+        res_id = el.attrib['id']
+
+        element = ET.Element("public")
+        element.attrib['name'] = name
+        element.attrib['id'] = res_id
+        element.attrib['type'] = res_type
+        element.attrib['f'] = apk_path
+        element.tail = "\n"                      # Edit the element's tail
+
+        rootXml.insert(0, element)
+
+    baseXmlTree.write(basePublicXml,encoding="utf-8", xml_declaration=True)
+        
+
+
+def fmyFixPublicResourcesIds2(baseapkdir, splitapkpaths):
+    """JUST MERGE XML... not changing names"""
+
+    basePublicXml = Path(baseapkdir) / "res" / "values" / "public.xml"
+    ## check if there are duplicates
+    paths = splitapkpaths + [baseapkdir]
+
+    def getKeyFromElem(el):
+        return f"{el.attrib['name']}---{el.attrib['type']}###{el.attrib['id']}"
+
+    def x(p):
+        p = Path(p)
+        publicXml = p / "res" / "values" / "public.xml"    
+        keys = []
+        if not publicXml.exists():
+            return []
+
+        baseXmlTree = xml.etree.ElementTree.parse(publicXml)
+        for el in baseXmlTree.getroot():
+            if "name" in el.attrib and "id" in el.attrib and "type" in el.attrib:
+                keys.append(getKeyFromElem(el))
+        return keys
+
+    ppp = list(map(x, paths))
+    for i, p in enumerate(paths):
+        print(f"path: {p} elems {len(ppp[i])}" )
+
+    base = ppp[-1]
+    base_no_id = [p.split("###")[0] for p in base]
+    others = ppp[0:-1]
+
+    for i, o in enumerate(others):
+        inBoth = set(base) & set(o)
+        onlyInOther = set(o) - set(base)
+        print(f"path {paths[i]}  inBoth = {len(inBoth)}  onlyinOther= {len(onlyInOther)}")
+
+    
+        o_no_id = [p.split("###")[0] for p in o]
+
+        inBoth_no_id = set(base_no_id) & set(o_no_id)
+        onlyInOther_no_id = set(o_no_id) - set(base_no_id)
+        print(f" NO IDDS path {paths[i]}  inBoth = {len(inBoth_no_id)}  onlyinOther= {len(onlyInOther_no_id)}")
+
+        baseXmlTree = xml.etree.ElementTree.parse(basePublicXml)
+        rootXml = baseXmlTree.getroot()
+
+        for s in onlyInOther:
+            print(s)
+            name = s.split("---")[0]
+            res_type = s.split("---")[1].split("###")[0]
+            res_id = s.split("###")[1]
+
+            
+
+            element = ET.Element("public")
+            element.attrib['name'] = name
+            element.attrib['id'] = res_id
+            element.attrib['type'] = res_type
+            element.attrib['f'] = paths[i]
+            element.tail = "\n"                      # Edit the element's tail
+
+            rootXml.insert(0, element)
+
+        baseXmlTree.write(basePublicXml,encoding="utf-8", xml_declaration=True)
+        
+    ## Find duplicate ids
+    baseXmlTree = xml.etree.ElementTree.parse(basePublicXml)
+
+    ids = {}
+    for el in baseXmlTree.iter():
+        if "id" in el.attrib:
+            res_id = el.attrib["id"]
+
+            if res_id in ids:
+                ids[res_id].append(el)
+            else:
+                ids[res_id] = [el]
+
+    count = 0
+    for k, v in ids.items():
+        if len(v) > 1:
+            res_types = [el.attrib['type'] for el in v]
+            res_name =  [el.attrib['name'] for el in v]
+            print(f"found id {k} with {len(v)} elements {res_name} {res_types}")
+            count = count + 1
+    print(f"found {count} duplicates")
+
+
+def myFixPublicResourcesIds(baseapkdir, splitapkpaths):
+    baseapkdir = Path(baseapkdir)
+
+    basePublicXml = baseapkdir / "res" / "values" / "public.xml"
+
+    if not basePublicXml.exists():
+        return
+
+    resources = DummyResources()
+
+    baseXmlTree = xml.etree.ElementTree.parse(basePublicXml)
+    for el in baseXmlTree.getroot():
+        if "name" in el.attrib and "id" in el.attrib and "type" in el.attrib:
+            resources.addFromBase(el.attrib['name'], el.attrib['type'], el.attrib['id'])
+            
+    print(f"[+] KZK Resolving {len(resources.store)} resource identifiers.")
+
+
+    for splitdir in splitapkpaths:
+        publicXml = Path(splitdir) / "res" / "values" / "public.xml"
+        if publicXml.exists():
+            tree = xml.etree.ElementTree.parse(publicXml)
+            for el in tree.getroot():
+                if "name" in el.attrib and "id" in el.attrib and "type" in el.attrib:
+                    r = resources.findById(el.attrib['type'], el.attrib['id'])
+                    r.realName = el.attrib["name"]
+
+    print(f"[+] KZK Located {len(resources.getItemsWithRealName())} true resource names.")
+    
+    updated = 0
+    for el in baseXmlTree.getroot():
+        if "name" in el.attrib and "id" in el.attrib and "type" in el.attrib:
+            r = resources.findByDummyName(el.attrib['type'], el.attrib['name'])
+            if r.realName:
+                el.attrib["name"] = r.realName
+                updated += 1
+    baseXmlTree.write(basePublicXml,encoding="utf-8", xml_declaration=True,
+    )
+    print(
+        "[+] KZK Updated "
+        + str(updated)
+        + " dummy resource names with true names in the base APK."
+    )
+
+    updated = 0
+    files = baseapkdir.rglob("res/**/*.xml")
+    # for (root, dirs, files) in os.walk(os.path.join(baseapkdir, "res")):
+    for f in files:
+            # if f.lower().endswith(".xml"):
+        try:
+            # Load the XML
+            dbgPrint(f"[~] Parsing {f}")
+            tree = xml.etree.ElementTree.parse(f)
+
+            # Register the namespaces and get the prefix for the "android" namespace
+            namespaces = dict(
+                [
+                    node
+                    for _, node in xml.etree.ElementTree.iterparse(
+                        baseapkdir / "AndroidManifest.xml",
+                        events=["start-ns"],
+                    )
+                ]
+            )
+            for ns in namespaces:
+                xml.etree.ElementTree.register_namespace(ns, namespaces[ns])
+            ns = "{" + namespaces["android"] + "}"
+
+            # Update references to APKTOOL_DUMMY_XXX resources
+            changed = False
+            for el in tree.iter():
+                # Check for references to APKTOOL_DUMMY_XXX resources in attributes of this element
+                for attr in el.attrib:
+                    val = el.attrib[attr]
+
+                    if (
+                        val.startswith("@")
+                        and "/" in val
+                        and val.split("/")[1].startswith("APKTOOL_DUMMY_")
+                    ):
+                        res_type = val.split("/")[0][1:]
+                        dummyName = val.split("/")[1]
+
+                        r = resources.findByDummyName(res_type, dummyName)
+
+                        if r and r.realName:
+                            el.attrib[attr] = val.replace(dummyName, r.realName)
+                            updated += 1
+                            changed = True
+                    elif val.startswith("APKTOOL_DUMMY_") and "type" in el.attrib:
+                        res_type = el.attrib['type']
+                        dummyName = val
+
+                        r = resources.findByDummyName(res_type, dummyName)
+
+                        if r and r.realName:
+                            el.attrib[attr] = val.replace(dummyName, r.realName)
+                            updated += 1
+                            changed = True
+                    elif (
+                        val.startswith("APKTOOL_DUMMY_")
+                    ):
+                        print(f"[KZK] WARNING I DONT KNOW THE TYPE HERE {val} {attr}")
+                        
+
+                # Check for references to APKTOOL_DUMMY_XXX resources in the element text
+                val = el.text
+                if (
+                    val is not None
+                    and val.startswith("@")
+                    and "/" in val
+                    and val.split("/")[1].startswith("APKTOOL_DUMMY_")
+                    # and dummyNameToRealName[val.split("/")[1]] is not None
+                ):
+                    res_type = val.split("/")[0][1:]
+                    dummyName = val.split("/")[1]
+
+                    r = resources.findByDummyName(res_type, dummyName)
+
+                    if r and r.realName:
+                        el.text = val.replace(dummyName, r.realName)
+                        updated += 1
+                        changed = True
+
+            # Save the file if it was updated
+            if changed == True:
+                tree.write(
+                    f,
+                    encoding="utf-8",
+                    xml_declaration=True,
+                )
+        except xml.etree.ElementTree.ParseError:
+            print(
+                "[-] XML parse error in "
+                + f
+                + ", skipping."
+            )
+    print(
+        "[+] Updated "
+        + str(updated)
+        + " references to dummy resource names in the base APK."
+    )
+    print("")
 
 ####################
 # Fix public resource identifiers that are shared across split APKs.
@@ -467,116 +924,116 @@ def fixPublicResourceIDs(baseapkdir, splitapkpaths):
                         found += 1
     print("[+] Located " + str(found) + " true resource names.")
 
-    # Step 3) Update the base APK to replace all APKTOOL_DUMMY_XXX resource names with the true
-    #        resource name.
-    updated = 0
-    for el in baseXmlTree.getroot():
-        if "name" in el.attrib and "id" in el.attrib:
-            if (
-                el.attrib["name"] in dummyNameToRealName
-                and dummyNameToRealName[el.attrib["name"]] is not None
-            ):
-                el.attrib["name"] = dummyNameToRealName[el.attrib["name"]]
-                updated += 1
-    baseXmlTree.write(
-        os.path.join(baseapkdir, "res", "values", "public.xml"),
-        encoding="utf-8",
-        xml_declaration=True,
-    )
-    print(
-        "[+] Updated "
-        + str(updated)
-        + " dummy resource names with true names in the base APK."
-    )
+    # # Step 3) Update the base APK to replace all APKTOOL_DUMMY_XXX resource names with the true
+    # #        resource name.
+    # updated = 0
+    # for el in baseXmlTree.getroot():
+    #     if "name" in el.attrib and "id" in el.attrib:
+    #         if (
+    #             el.attrib["name"] in dummyNameToRealName
+    #             and dummyNameToRealName[el.attrib["name"]] is not None
+    #         ):
+    #             el.attrib["name"] = dummyNameToRealName[el.attrib["name"]]
+    #             updated += 1
+    # baseXmlTree.write(
+    #     os.path.join(baseapkdir, "res", "values", "public.xml"),
+    #     encoding="utf-8",
+    #     xml_declaration=True,
+    # )
+    # print(
+    #     "[+] Updated "
+    #     + str(updated)
+    #     + " dummy resource names with true names in the base APK."
+    # )
 
-    # Step 4) Find all references to APKTOOL_DUMMY_XXX resources within other XML resource files
-    #        in the base APK and update them to refer to the true resource name.
-    updated = 0
-    for (root, dirs, files) in os.walk(os.path.join(baseapkdir, "res")):
-        for f in files:
-            if f.lower().endswith(".xml"):
-                try:
-                    # Load the XML
-                    dbgPrint("[~] Parsing " + os.path.join(root, f))
-                    tree = xml.etree.ElementTree.parse(os.path.join(root, f))
+    # # Step 4) Find all references to APKTOOL_DUMMY_XXX resources within other XML resource files
+    # #        in the base APK and update them to refer to the true resource name.
+    # updated = 0
+    # for (root, dirs, files) in os.walk(os.path.join(baseapkdir, "res")):
+    #     for f in files:
+    #         if f.lower().endswith(".xml"):
+    #             try:
+    #                 # Load the XML
+    #                 dbgPrint("[~] Parsing " + os.path.join(root, f))
+    #                 tree = xml.etree.ElementTree.parse(os.path.join(root, f))
 
-                    # Register the namespaces and get the prefix for the "android" namespace
-                    namespaces = dict(
-                        [
-                            node
-                            for _, node in xml.etree.ElementTree.iterparse(
-                                os.path.join(baseapkdir, "AndroidManifest.xml"),
-                                events=["start-ns"],
-                            )
-                        ]
-                    )
-                    for ns in namespaces:
-                        xml.etree.ElementTree.register_namespace(ns, namespaces[ns])
-                    ns = "{" + namespaces["android"] + "}"
+    #                 # Register the namespaces and get the prefix for the "android" namespace
+    #                 namespaces = dict(
+    #                     [
+    #                         node
+    #                         for _, node in xml.etree.ElementTree.iterparse(
+    #                             os.path.join(baseapkdir, "AndroidManifest.xml"),
+    #                             events=["start-ns"],
+    #                         )
+    #                     ]
+    #                 )
+    #                 for ns in namespaces:
+    #                     xml.etree.ElementTree.register_namespace(ns, namespaces[ns])
+    #                 ns = "{" + namespaces["android"] + "}"
 
-                    # Update references to APKTOOL_DUMMY_XXX resources
-                    changed = False
-                    for el in tree.iter():
-                        # Check for references to APKTOOL_DUMMY_XXX resources in attributes of this element
-                        for attr in el.attrib:
-                            val = el.attrib[attr]
-                            if (
-                                val.startswith("@")
-                                and "/" in val
-                                and val.split("/")[1].startswith("APKTOOL_DUMMY_")
-                                and dummyNameToRealName[val.split("/")[1]] is not None
-                            ):
-                                el.attrib[attr] = (
-                                    val.split("/")[0]
-                                    + "/"
-                                    + dummyNameToRealName[val.split("/")[1]]
-                                )
-                                updated += 1
-                                changed = True
-                            elif (
-                                val.startswith("APKTOOL_DUMMY_")
-                                and dummyNameToRealName[val] is not None
-                            ):
-                                el.attrib[attr] = dummyNameToRealName[val]
-                                updated += 1
-                                changed = True
+    #                 # Update references to APKTOOL_DUMMY_XXX resources
+    #                 changed = False
+    #                 for el in tree.iter():
+    #                     # Check for references to APKTOOL_DUMMY_XXX resources in attributes of this element
+    #                     for attr in el.attrib:
+    #                         val = el.attrib[attr]
+    #                         if (
+    #                             val.startswith("@")
+    #                             and "/" in val
+    #                             and val.split("/")[1].startswith("APKTOOL_DUMMY_")
+    #                             and dummyNameToRealName[val.split("/")[1]] is not None
+    #                         ):
+    #                             el.attrib[attr] = (
+    #                                 val.split("/")[0]
+    #                                 + "/"
+    #                                 + dummyNameToRealName[val.split("/")[1]]
+    #                             )
+    #                             updated += 1
+    #                             changed = True
+    #                         elif (
+    #                             val.startswith("APKTOOL_DUMMY_")
+    #                             and dummyNameToRealName[val] is not None
+    #                         ):
+    #                             el.attrib[attr] = dummyNameToRealName[val]
+    #                             updated += 1
+    #                             changed = True
 
-                        # Check for references to APKTOOL_DUMMY_XXX resources in the element text
-                        val = el.text
-                        if (
-                            val is not None
-                            and val.startswith("@")
-                            and "/" in val
-                            and val.split("/")[1].startswith("APKTOOL_DUMMY_")
-                            and dummyNameToRealName[val.split("/")[1]] is not None
-                        ):
-                            el.text = (
-                                val.split("/")[0]
-                                + "/"
-                                + dummyNameToRealName[val.split("/")[1]]
-                            )
-                            updated += 1
-                            changed = True
+    #                     # Check for references to APKTOOL_DUMMY_XXX resources in the element text
+    #                     val = el.text
+    #                     if (
+    #                         val is not None
+    #                         and val.startswith("@")
+    #                         and "/" in val
+    #                         and val.split("/")[1].startswith("APKTOOL_DUMMY_")
+    #                         and dummyNameToRealName[val.split("/")[1]] is not None
+    #                     ):
+    #                         el.text = (
+    #                             val.split("/")[0]
+    #                             + "/"
+    #                             + dummyNameToRealName[val.split("/")[1]]
+    #                         )
+    #                         updated += 1
+    #                         changed = True
 
-                    # Save the file if it was updated
-                    if changed == True:
-                        tree.write(
-                            os.path.join(root, f),
-                            encoding="utf-8",
-                            xml_declaration=True,
-                        )
-                except xml.etree.ElementTree.ParseError:
-                    print(
-                        "[-] XML parse error in "
-                        + os.path.join(root, f)
-                        + ", skipping."
-                    )
-    print(
-        "[+] Updated "
-        + str(updated)
-        + " references to dummy resource names in the base APK."
-    )
-    print("")
+    #                 # Save the file if it was updated
+    #                 if changed == True:
+    #                     tree.write(
+    #                         os.path.join(root, f),
+    #                         encoding="utf-8",
+    #                         xml_declaration=True,
+    #                     )
+    #             except xml.etree.ElementTree.ParseError:
+    #                 print(
+    #                     "[-] XML parse error in "
+    #                     + os.path.join(root, f)
+    #                     + ", skipping."
+    #                 )
+    # print(
+    #     "[+] Updated "
+    #     + str(updated)
+    #     + " references to dummy resource names in the base APK."
+    # )
+    # print("")
 
 
 ####################
